@@ -283,6 +283,57 @@ input::placeholder { color: var(--muted); }
   font-weight: 700;
 }
 
+/* Tabs */
+.tab-row {
+  display: flex;
+  gap: 4px;
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 3px;
+  margin-bottom: 14px;
+}
+.tab {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.tab:hover { color: var(--text); }
+.tab.active { background: var(--surface); color: var(--yellow); }
+
+/* URL added items */
+.url-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+.url-item-icon { font-size: 18px; flex-shrink: 0; }
+.url-item-info { flex: 1; min-width: 0; }
+.url-item-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.url-item-type { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.url-item-remove {
+  background: none; border: none;
+  color: var(--muted); cursor: pointer;
+  font-size: 16px; padding: 2px 4px;
+  border-radius: 4px; flex-shrink: 0;
+  transition: color .15s;
+}
+.url-item-remove:hover { color: var(--red); }
+
 /* Duration row */
 .dur-row {
   display: flex;
@@ -674,20 +725,44 @@ input::placeholder { color: var(--muted); }
     <!-- Step 2: Playlist -->
     <div class="step-card locked" id="step2">
       <div class="step-num">Step 02</div>
-      <div class="step-title">Scegli le Playlist</div>
+      <div class="step-title">Scegli le Sorgenti</div>
 
-      <button class="btn btn-secondary" id="btn-load-pl" onclick="loadPlaylists()" style="margin-bottom:12px;">
-        Carica le mie playlist
-      </button>
+      <!-- Tab switcher -->
+      <div class="tab-row" id="tab-row">
+        <button class="tab active" id="tab-mine" onclick="switchTab('mine')">Le mie playlist</button>
+        <button class="tab" id="tab-url" onclick="switchTab('url')">Incolla link</button>
+      </div>
 
-      <div class="pl-scroll" id="pl-list">
-        <div style="color:var(--muted);font-size:13px;padding:4px 0;">
-          Connetti Spotify per vedere le tue playlist.
+      <!-- My playlists panel -->
+      <div id="panel-mine">
+        <button class="btn btn-secondary" id="btn-load-pl" onclick="loadPlaylists()" style="margin-bottom:12px;">
+          Carica le mie playlist
+        </button>
+        <div class="pl-scroll" id="pl-list">
+          <div style="color:var(--muted);font-size:13px;padding:4px 0;">
+            Connetti Spotify per vedere le tue playlist.
+          </div>
         </div>
       </div>
 
-      <div id="sel-count" style="font-size:12px;color:var(--muted);margin-bottom:12px;display:none;">
-        0 playlist selezionate
+      <!-- URL panel -->
+      <div id="panel-url" style="display:none;">
+        <label class="field-label">Link Spotify (playlist, album, radio…)</label>
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <input type="text" id="url-input" placeholder="https://open.spotify.com/playlist/…" style="margin-bottom:0;flex:1;">
+          <button class="btn btn-secondary" onclick="addFromUrl()" style="width:auto;padding:11px 16px;white-space:nowrap;flex-shrink:0;">
+            Aggiungi
+          </button>
+        </div>
+        <div class="hint" style="margin-bottom:12px;">
+          Funziona con: playlist, album, artista (top tracks), brano singolo.<br>
+          Puoi aggiungere più link insieme.
+        </div>
+        <div class="pl-scroll" id="url-list"></div>
+      </div>
+
+      <div id="sel-count" style="font-size:12px;color:var(--muted);margin-bottom:4px;margin-top:4px;">
+        Nessuna sorgente selezionata
       </div>
     </div>
 
@@ -823,16 +898,16 @@ let deviceId     = null;
 let sdkReady     = false;
 let spotifyPlayer= null;
 
-let allTracks    = [];
-let shuffled     = [];
-let idx          = 0;
-let turn         = 1;
-let playing      = false;
-let progTimer    = null;
-let startTime    = null;
-let duration     = 30;
-let autoStop     = null;
-let selectedPl   = [];
+let allTracks      = [];
+let shuffled       = [];
+let idx            = 0;
+let turn           = 1;
+let playing        = false;
+let progTimer      = null;
+let startTime      = null;
+let duration       = 30;
+let autoStop       = null;
+let selectedSources = [];
 
 // ─────────────────────────────────
 //  BOOT
@@ -958,7 +1033,17 @@ window.onSpotifyWebPlaybackSDKReady = () => {
 };
 
 // ─────────────────────────────────
-//  PLAYLISTS
+//  TAB SWITCHER
+// ─────────────────────────────────
+function switchTab(tab) {
+  document.getElementById('panel-mine').style.display = tab === 'mine' ? 'block' : 'none';
+  document.getElementById('panel-url').style.display  = tab === 'url'  ? 'block' : 'none';
+  document.getElementById('tab-mine').classList.toggle('active', tab === 'mine');
+  document.getElementById('tab-url').classList.toggle('active',  tab === 'url');
+}
+
+// ─────────────────────────────────
+//  MY PLAYLISTS
 // ─────────────────────────────────
 async function loadPlaylists() {
   if (!token) { toast('Connetti prima Spotify'); return; }
@@ -970,7 +1055,7 @@ async function loadPlaylists() {
     let items = [], url = 'https://api.spotify.com/v1/me/playlists?limit=50';
     while (url) {
       const r = await spFetch(url);
-      if (!r.ok) throw new Error('Errore API');
+      if (!r.ok) throw new Error('Errore API Spotify (' + r.status + ')');
       const d = await r.json();
       items = items.concat(d.items.filter(Boolean));
       url = d.next;
@@ -995,7 +1080,8 @@ function renderPlaylists(list) {
     const img = pl.images?.[0]?.url || '';
     const d   = document.createElement('div');
     d.className = 'pl-item';
-    d.dataset.id = pl.id;
+    d.dataset.id   = pl.id;
+    d.dataset.type = 'playlist';
     d.innerHTML = `
       ${img ? `<img class="pl-thumb" src="${img}" alt="">` : '<div class="pl-thumb"></div>'}
       <div class="pl-info">
@@ -1003,26 +1089,124 @@ function renderPlaylists(list) {
         <div class="pl-meta">${pl.tracks.total} tracce</div>
       </div>
       <div class="pl-check">✓</div>`;
-    d.onclick = () => togglePl(d, pl.id);
+    d.onclick = () => togglePl(d, { type: 'playlist', id: pl.id, name: pl.name });
     el.appendChild(d);
   });
-  document.getElementById('sel-count').style.display = 'block';
 }
 
-function togglePl(el, id) {
+function togglePl(el, source) {
+  const key = source.type + ':' + source.id;
   el.classList.toggle('sel');
-  selectedPl = el.classList.contains('sel')
-    ? [...selectedPl, id]
-    : selectedPl.filter(x => x !== id);
-  document.getElementById('sel-count').textContent = `${selectedPl.length} playlist selezionat${selectedPl.length === 1 ? 'a' : 'e'}`;
-  document.getElementById('btn-start').disabled = selectedPl.length === 0;
+  if (el.classList.contains('sel')) {
+    if (!selectedSources.find(s => s.type + ':' + s.id === key)) selectedSources.push(source);
+  } else {
+    selectedSources = selectedSources.filter(s => s.type + ':' + s.id !== key);
+  }
+  updateSelCount();
 }
 
 // ─────────────────────────────────
-//  GAME START
+//  URL / LINK INPUT
+// ─────────────────────────────────
+async function addFromUrl() {
+  const raw = document.getElementById('url-input').value.trim();
+  if (!raw) { toast('Incolla un link Spotify'); return; }
+
+  // Parse Spotify URL or URI
+  // Formats: https://open.spotify.com/TYPE/ID, spotify:TYPE:ID
+  const match =
+    raw.match(/open\.spotify\.com\/(playlist|album|artist|track)\/([A-Za-z0-9]+)/) ||
+    raw.match(/spotify:(playlist|album|artist|track):([A-Za-z0-9]+)/);
+
+  if (!match) {
+    toast('Link non riconosciuto. Usa un link da open.spotify.com');
+    return;
+  }
+
+  const [, type, id] = match;
+  const key = type + ':' + id;
+
+  if (selectedSources.find(s => s.type + ':' + s.id === key)) {
+    toast('Già aggiunto!'); return;
+  }
+
+  // Fetch name from Spotify API
+  const btn = document.querySelector('#panel-url .btn');
+  btn.innerHTML = '<span class="spin-sm"></span>';
+  btn.disabled = true;
+
+  try {
+    let name = '', tracks = '?', img = '';
+    if (type === 'playlist') {
+      const r = await spFetch(`https://api.spotify.com/v1/playlists/${id}?fields=name,tracks.total,images`);
+      const d = await r.json();
+      name = d.name; tracks = d.tracks?.total; img = d.images?.[0]?.url || '';
+    } else if (type === 'album') {
+      const r = await spFetch(`https://api.spotify.com/v1/albums/${id}`);
+      const d = await r.json();
+      name = d.name + ' — ' + (d.artists?.[0]?.name || '');
+      tracks = d.tracks?.total; img = d.images?.[0]?.url || '';
+    } else if (type === 'artist') {
+      const r = await spFetch(`https://api.spotify.com/v1/artists/${id}`);
+      const d = await r.json();
+      name = d.name + ' (Top Tracks)'; img = d.images?.[0]?.url || ''; tracks = '10';
+    } else if (type === 'track') {
+      const r = await spFetch(`https://api.spotify.com/v1/tracks/${id}`);
+      const d = await r.json();
+      name = d.name + ' — ' + (d.artists?.[0]?.name || '');
+      img = d.album?.images?.[0]?.url || ''; tracks = '1';
+    }
+
+    const source = { type, id, name, img, tracks };
+    selectedSources.push(source);
+    renderUrlItem(source);
+    document.getElementById('url-input').value = '';
+    updateSelCount();
+  } catch(e) {
+    toast('Errore nel recupero del link: ' + e.message);
+  } finally {
+    btn.textContent = 'Aggiungi';
+    btn.disabled = false;
+  }
+}
+
+function renderUrlItem(source) {
+  const icons = { playlist: '🎵', album: '💿', artist: '🎤', track: '🎼' };
+  const labels = { playlist: 'Playlist', album: 'Album', artist: 'Artista · Top Tracks', track: 'Brano singolo' };
+  const el = document.createElement('div');
+  el.className = 'url-item';
+  el.id = 'url-item-' + source.type + '-' + source.id;
+  el.innerHTML = `
+    ${source.img ? `<img class="pl-thumb" src="${source.img}" alt="" style="border-radius:4px;">` : `<span class="url-item-icon">${icons[source.type]}</span>`}
+    <div class="url-item-info">
+      <div class="url-item-name">${esc(source.name)}</div>
+      <div class="url-item-type">${labels[source.type]} · ${source.tracks} tracce</div>
+    </div>
+    <button class="url-item-remove" onclick="removeUrlItem('${source.type}','${source.id}')">✕</button>`;
+  document.getElementById('url-list').appendChild(el);
+}
+
+function removeUrlItem(type, id) {
+  const key = type + ':' + id;
+  selectedSources = selectedSources.filter(s => s.type + ':' + s.id !== key);
+  const el = document.getElementById('url-item-' + type + '-' + id);
+  if (el) el.remove();
+  updateSelCount();
+}
+
+function updateSelCount() {
+  const n = selectedSources.length;
+  document.getElementById('sel-count').textContent =
+    n === 0 ? 'Nessuna sorgente selezionata' :
+    n === 1 ? '1 sorgente selezionata' : `${n} sorgenti selezionate`;
+  document.getElementById('btn-start').disabled = n === 0;
+}
+
+// ─────────────────────────────────
+//  GAME START — fetch tracks from all sources
 // ─────────────────────────────────
 async function startGame() {
-  if (!selectedPl.length) { toast('Seleziona almeno una playlist'); return; }
+  if (!selectedSources.length) { toast('Seleziona almeno una sorgente'); return; }
   duration = parseInt(document.getElementById('dur-input').value) || 30;
   const ak = document.getElementById('anth-key').value.trim();
   if (ak) localStorage.setItem('anth_key', ak);
@@ -1033,16 +1217,17 @@ async function startGame() {
 
   try {
     allTracks = [];
-    for (const pid of selectedPl) {
-      let url = `https://api.spotify.com/v1/playlists/${pid}/tracks?limit=100&fields=next,items(track(id,name,artists,album,uri,duration_ms))`;
-      while (url) {
-        const r = await spFetch(url);
-        if (!r.ok) break;
-        const d = await r.json();
-        d.items.forEach(i => { if (i?.track?.uri) allTracks.push(i.track); });
-        url = d.next;
-      }
+    for (const src of selectedSources) {
+      const tracks = await fetchTracksFromSource(src);
+      allTracks = allTracks.concat(tracks);
     }
+    // Deduplicate by URI
+    const seen = new Set();
+    allTracks = allTracks.filter(t => {
+      if (seen.has(t.uri)) return false;
+      seen.add(t.uri); return true;
+    });
+
     if (!allTracks.length) { toast('Nessuna traccia trovata!'); return; }
     shuffled = shuffle([...allTracks]);
     idx  = 0;
@@ -1055,6 +1240,50 @@ async function startGame() {
     btn.textContent = 'Inizia la Partita';
     btn.disabled = false;
   }
+}
+
+async function fetchTracksFromSource(src) {
+  const tracks = [];
+  try {
+    if (src.type === 'playlist') {
+      let url = `https://api.spotify.com/v1/playlists/${src.id}/tracks?limit=100&fields=next,items(track(id,name,artists,album,uri,duration_ms))`;
+      while (url) {
+        const r = await spFetch(url);
+        if (!r.ok) break;
+        const d = await r.json();
+        d.items.forEach(i => { if (i?.track?.uri) tracks.push(i.track); });
+        url = d.next;
+      }
+    } else if (src.type === 'album') {
+      let url = `https://api.spotify.com/v1/albums/${src.id}/tracks?limit=50`;
+      // Also fetch album details to get images and release_date
+      const albumR = await spFetch(`https://api.spotify.com/v1/albums/${src.id}`);
+      const albumD = albumR.ok ? await albumR.json() : {};
+      while (url) {
+        const r = await spFetch(url);
+        if (!r.ok) break;
+        const d = await r.json();
+        d.items.forEach(t => {
+          if (t?.uri) tracks.push({ ...t, album: albumD });
+        });
+        url = d.next;
+      }
+    } else if (src.type === 'artist') {
+      // Top tracks (max 10, no paging)
+      const r = await spFetch(`https://api.spotify.com/v1/artists/${src.id}/top-tracks?market=IT`);
+      if (r.ok) {
+        const d = await r.json();
+        d.tracks.forEach(t => { if (t?.uri) tracks.push(t); });
+      }
+    } else if (src.type === 'track') {
+      const r = await spFetch(`https://api.spotify.com/v1/tracks/${src.id}`);
+      if (r.ok) {
+        const t = await r.json();
+        if (t?.uri) tracks.push(t);
+      }
+    }
+  } catch {}
+  return tracks;
 }
 
 // ─────────────────────────────────
