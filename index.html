@@ -910,25 +910,79 @@ let autoStop       = null;
 let selectedSources = [];
 
 // ─────────────────────────────────
+//  SDK CALLBACK — must be defined BEFORE the script loads
+// ─────────────────────────────────
+window.onSpotifyWebPlaybackSDKReady = () => {
+  spotifyPlayer = new Spotify.Player({
+    name: 'HITSTER',
+    getOAuthToken: cb => cb(token),
+    volume: 0.85
+  });
+  spotifyPlayer.addListener('ready', ({ device_id }) => {
+    deviceId = device_id;
+    sdkReady = true;
+    setSpStatus('ok', 'Spotify pronto ✓');
+    console.log('[HITSTER] SDK ready, device:', device_id);
+  });
+  spotifyPlayer.addListener('not_ready', ({ device_id }) => {
+    sdkReady = false;
+    console.warn('[HITSTER] Device went offline:', device_id);
+  });
+  spotifyPlayer.addListener('player_state_changed', st => {
+    if (!st) return;
+    playing = !st.paused;
+    updatePlayBtn();
+  });
+  spotifyPlayer.addListener('initialization_error', ({ message }) => {
+    toast('Errore SDK: ' + message);
+    console.error('[HITSTER] init error:', message);
+  });
+  spotifyPlayer.addListener('authentication_error', ({ message }) => {
+    toast('Errore auth Spotify: rieffettua il login');
+    localStorage.removeItem('sp_token');
+    console.error('[HITSTER] auth error:', message);
+  });
+  spotifyPlayer.addListener('account_error', ({ message }) => {
+    toast('Spotify Premium richiesto per la riproduzione');
+    console.error('[HITSTER] account error:', message);
+  });
+  spotifyPlayer.connect().then(ok => {
+    console.log('[HITSTER] Player connect:', ok ? 'OK' : 'FAILED');
+  });
+};
+
+// ─────────────────────────────────
 //  BOOT
 // ─────────────────────────────────
 window.addEventListener('load', async () => {
-  // Check for stored token
-  const t   = localStorage.getItem('sp_token');
-  const exp = parseInt(localStorage.getItem('sp_expires') || '0');
-  if (t && exp > Date.now()) {
-    token = t;
-    onAuthenticated();
-    return;
-  }
-
-  // PKCE callback?
+  // PKCE callback takes priority
   const params = new URLSearchParams(location.search);
   const code   = params.get('code');
   if (code) {
     history.replaceState({}, '', location.pathname);
     await exchangeCode(code);
+    return;
   }
+
+  // Check for a still-valid stored token
+  const t   = localStorage.getItem('sp_token');
+  const exp = parseInt(localStorage.getItem('sp_expires') || '0');
+  if (t && exp > Date.now() + 60000) { // 1 min safety margin
+    token = t;
+    onAuthenticated();
+    return;
+  }
+
+  // Token missing or expired — try refresh if we have a refresh token
+  const rt = localStorage.getItem('sp_refresh');
+  if (rt) {
+    await refreshToken(rt);
+    return;
+  }
+
+  // Nothing — user must log in
+  localStorage.removeItem('sp_token');
+  localStorage.removeItem('sp_expires');
 });
 
 // ─────────────────────────────────
@@ -979,17 +1033,48 @@ async function exchangeCode(code) {
     });
     const d = await r.json();
     if (d.access_token) {
-      token = d.access_token;
-      localStorage.setItem('sp_token',   token);
-      localStorage.setItem('sp_expires', Date.now() + d.expires_in * 1000);
+      saveTokens(d);
       onAuthenticated();
     } else {
-      setSpStatus('', 'Errore: ' + (d.error_description || 'auth fallita'));
-      toast('Errore autenticazione Spotify');
+      setSpStatus('', 'Errore auth');
+      toast('Errore: ' + (d.error_description || 'auth fallita'));
     }
   } catch(e) {
     toast('Errore di rete: ' + e.message);
   }
+}
+
+async function refreshToken(rt) {
+  setSpStatus('loading', 'Rinnovo token…');
+  try {
+    const r = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'refresh_token',
+        refresh_token: rt,
+        client_id:     CLIENT_ID
+      })
+    });
+    const d = await r.json();
+    if (d.access_token) {
+      saveTokens(d);
+      onAuthenticated();
+    } else {
+      // Refresh failed, need full login
+      localStorage.removeItem('sp_refresh');
+      setSpStatus('', 'Sessione scaduta — rieffettua il login');
+    }
+  } catch(e) {
+    setSpStatus('', 'Errore rinnovo token');
+  }
+}
+
+function saveTokens(d) {
+  token = d.access_token;
+  localStorage.setItem('sp_token',   token);
+  localStorage.setItem('sp_expires', Date.now() + d.expires_in * 1000);
+  if (d.refresh_token) localStorage.setItem('sp_refresh', d.refresh_token);
 }
 
 function onAuthenticated() {
@@ -1000,37 +1085,15 @@ function onAuthenticated() {
 }
 
 // ─────────────────────────────────
-//  SPOTIFY SDK
+//  SPOTIFY SDK LOADER
 // ─────────────────────────────────
 function loadSpotifySDK() {
+  if (spotifyPlayer) { spotifyPlayer.connect(); return; }
   if (document.querySelector('script[src*="spotify-player"]')) return;
   const s = document.createElement('script');
   s.src = 'https://sdk.scdn.co/spotify-player.js';
   document.head.appendChild(s);
 }
-
-window.onSpotifyWebPlaybackSDKReady = () => {
-  spotifyPlayer = new Spotify.Player({
-    name: 'HITSTER',
-    getOAuthToken: cb => cb(token),
-    volume: 0.85
-  });
-  spotifyPlayer.addListener('ready', ({ device_id }) => {
-    deviceId = device_id;
-    sdkReady = true;
-    setSpStatus('ok', 'Spotify pronto ✓');
-  });
-  spotifyPlayer.addListener('not_ready', () => { sdkReady = false; });
-  spotifyPlayer.addListener('player_state_changed', st => {
-    if (!st) return;
-    playing = !st.paused;
-    updatePlayBtn();
-  });
-  spotifyPlayer.addListener('initialization_error', ({ message }) => toast('SDK: ' + message));
-  spotifyPlayer.addListener('authentication_error',  ({ message }) => toast('Auth: ' + message));
-  spotifyPlayer.addListener('account_error',         ({ message }) => toast('Account: ' + message));
-  spotifyPlayer.connect();
-};
 
 // ─────────────────────────────────
 //  TAB SWITCHER
@@ -1314,22 +1377,48 @@ function loadTrack() {
 }
 
 async function togglePlay() {
-  if (!sdkReady) { toast('Player non pronto, attendi…'); return; }
+  if (!sdkReady) {
+    toast('Player non pronto — aspetta "Spotify pronto ✓" nella schermata iniziale');
+    return;
+  }
+  if (!deviceId) {
+    toast('Nessun dispositivo trovato, ricarica la pagina');
+    return;
+  }
   const track = shuffled[idx];
 
   if (!playing) {
     try {
-      await spFetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+      const r = await spFetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uris: [track.uri] })
       });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        const reason = err?.error?.reason || err?.error?.message || `HTTP ${r.status}`;
+        if (r.status === 403) {
+          toast('⚠️ Spotify Premium richiesto per la riproduzione');
+        } else if (r.status === 401) {
+          toast('Sessione scaduta — torna al setup e riaccedi');
+          localStorage.removeItem('sp_token');
+        } else if (r.status === 404) {
+          toast('Dispositivo non trovato — ricarica la pagina e riprova');
+        } else {
+          toast('Errore Spotify: ' + reason);
+        }
+        console.error('[HITSTER] play error', r.status, err);
+        return;
+      }
       playing = true;
       document.getElementById('vinyl').classList.add('spin');
       document.getElementById('mhint').textContent = 'Indovina la canzone!';
       startProgress();
       autoStop = setTimeout(pause, duration * 1000);
-    } catch(e) { toast('Errore riproduzione'); }
+    } catch(e) {
+      toast('Errore di rete: ' + e.message);
+      console.error('[HITSTER] fetch error', e);
+    }
   } else {
     pause();
   }
