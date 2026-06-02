@@ -1149,7 +1149,7 @@ function renderPlaylists(list) {
       ${img ? `<img class="pl-thumb" src="${img}" alt="">` : '<div class="pl-thumb"></div>'}
       <div class="pl-info">
         <div class="pl-name">${esc(pl.name)}</div>
-        <div class="pl-meta">${pl.tracks.total} tracce</div>
+        <div class="pl-meta">${pl.tracks?.total ?? '?'} tracce</div>
       </div>
       <div class="pl-check">✓</div>`;
     d.onclick = () => togglePl(d, { type: 'playlist', id: pl.id, name: pl.name });
@@ -1201,7 +1201,7 @@ async function addFromUrl() {
   try {
     let name = '', tracks = '?', img = '';
     if (type === 'playlist') {
-      const r = await spFetch(`https://api.spotify.com/v1/playlists/${id}?fields=name,tracks.total,images`);
+      const r = await spFetch(`https://api.spotify.com/v1/playlists/${id}?fields=name,tracks(total),images`);
       const d = await r.json();
       name = d.name; tracks = d.tracks?.total; img = d.images?.[0]?.url || '';
     } else if (type === 'album') {
@@ -1309,12 +1309,18 @@ async function fetchTracksFromSource(src) {
   const tracks = [];
   try {
     if (src.type === 'playlist') {
-      let url = `https://api.spotify.com/v1/playlists/${src.id}/tracks?limit=100&fields=next,items(track(id,name,artists,album,uri,duration_ms))`;
+      let url = `https://api.spotify.com/v1/playlists/${src.id}/tracks?limit=100`;
       while (url) {
         const r = await spFetch(url);
         if (!r.ok) break;
         const d = await r.json();
-        d.items.forEach(i => { if (i?.track?.uri) tracks.push(i.track); });
+        d.items.forEach(i => {
+          const t = i?.track;
+          // skip null, podcast episodes, and local files (no valid Spotify URI)
+          if (t && t.uri && t.uri.startsWith('spotify:track:') && t.name && t.artists?.length) {
+            tracks.push(t);
+          }
+        });
         url = d.next;
       }
     } else if (src.type === 'album') {
